@@ -1,11 +1,13 @@
 from mesa import Model
 from agents import Employer_Agent,Employee_Agent
+from datacollector import Data_Collector
 from mesa.time import BaseScheduler
 import numpy as np
 import random
+
 ##add in datacollectors so we can see it work
 class Labor_Model(Model):
-    def __init__(self,num_employee=1000,num_employer=10,num_jobseekers=10,wage_flexibility=(0.1,0.1),p_1=0.01,p_2=0.01,p_3=0.01):
+    def __init__(self,num_employee=1000,num_employer=10,num_jobseekers=10,wage_flexibility=(0.5,0.5),p_1=0.01,p_2=0.01,p_3=0.01):
         self.num_employer = num_employer
         self.employer_index = 0
         self.num_employee = num_employee
@@ -18,16 +20,12 @@ class Labor_Model(Model):
         self.p_4 = 1
         self.schedule_employees = BaseScheduler(self)
         self.schedule_employers = BaseScheduler(self)
-
         self.job_seeker_pool = []
         self.inactive_pool = []
         self.employee_seeker_pool = []
-
+        self.datacollector = Data_Collector(self)
         self.create_employee(self.num_employee)
         self.create_employer(self.num_employer,self.num_employee,wage_flexibility)
-
-        # print(len(self.employee_seeker_pool))
-        # print(len(self.job_seeker_pool))
 
         ## INIT ALLOCATING FIRMS TO WORKERS
         while(self.employee_seeker_pool or self.job_seeker_pool):
@@ -37,10 +35,6 @@ class Labor_Model(Model):
                 employee = random.choice(self.job_seeker_pool)
                 self.change_employer(employee,employer)
 
-        # print([str(a.employer) for a in self.schedule_employees.agents])
-        # print(self.employee_seeker_pool)
-        # print(self.job_seeker_pool)
-
         ## ADDING JOB SEEKERS
         for i in range(self.num_jobseekers):
             a = random.choice(self.schedule_employees.agents)
@@ -48,36 +42,8 @@ class Labor_Model(Model):
                 a = random.choice(self.schedule_employees.agents)
             self.change_employer(a,employer=None)
 
-        # print(len(self.job_seeker_pool))
-        # print(len(self.employee_seeker_pool))
-        # print([str(a) for a in self.job_seeker_pool])
-        # print([str(a) for a in self.employee_seeker_pool])
-
         ##FIND JOBS
         self.job_search()
-
-        # print(len(self.job_seeker_pool))
-        # print(len(self.employee_seeker_pool))
-        # print([str(a.unique_id) for a in self.job_seeker_pool])
-        # print([str(a) for a in self.employee_seeker_pool])
-
-    def testing(self):
-        vacancies = map(lambda x: x.firm_size - len(x.employees), self.schedule_employers.agents)
-        employees = map(lambda x:len(x.employees), self.schedule_employers.agents)
-        unemployed = [b for b in self.schedule_employees.agents if b.employer == None]
-        print("vacancies - " + str(sum(list(vacancies))))
-        print("no. of unemployed/inactive - " + str(len(unemployed)))
-
-        print("no. of employees - " + str(sum(list(employees))))
-        print("no in active - " + str(len([x for x in self.schedule_employees.agents if(x not in self.job_seeker_pool and x not in self.inactive_pool)])))
-
-        print("no. in jspool - " + str(len(self.job_seeker_pool)))
-        # print([x.unique_id for x in self.job_seeker_pool])
-        print("no. in inactive pool - " + str(len(self.inactive_pool)))
-        # print([x.unique_id for x in self.inactive_pool])
-        print("no. in total employees - " + str(len(self.schedule_employees.agents)))
-        print("no. in total employers - " + str(len(self.schedule_employers.agents)))
-
 
     def create_employee(self,num):
         wage_list = self.create_wage_list(num)
@@ -137,7 +103,6 @@ class Labor_Model(Model):
         ##If they are either leaving the WF or quitting/retrenched
         else:
             ##not leaving the work-fore
-            # print(employee)
             if(not leaving_wf):
                 self.job_seeker_pool.append(employee)
                 employee.employer.employees.remove(employee)
@@ -155,8 +120,6 @@ class Labor_Model(Model):
                 if(employee in self.job_seeker_pool):
                     self.job_seeker_pool.remove(employee)
                 else:
-                    # print("...." + str(employee))
-                    # print("..... " + str([str(a) for a in employee.employer.employees]))
                     employee.employer.employees.remove(employee)
                     employee.employer.employee_wage_list.remove(employee.wage)
                     employee.employer.vacancy_wage_list.append(employee.wage)
@@ -168,31 +131,28 @@ class Labor_Model(Model):
                 self.inactive_pool.append(employee)
 
     def job_search(self):
+        list = []
         for e in self.employee_seeker_pool:
-            # print("job hunting")
             for wage in e.vacancy_wage_list:
-                allowable_wage = (wage * (1-e.wage_flexibility[0]), wage * (1+e.wage_flexibility[1]))
-                possible_candidates = []
-                for a in self.job_seeker_pool:
-                    if(allowable_wage[0] <= a.wage <= allowable_wage[1] and a.past_employer != e):
-                        possible_candidates.append(a)
-                if(possible_candidates):
-                    # print("found")
-                    # print(e)
-                    # for i in possible_candidates:
-                    #     print(i)
-                    # print("-----")
-                    chosen_candidate = sorted(possible_candidates,key=lambda x:x.wage)[0]
-                    chosen_candidate.wage = wage
-                    self.change_employer(chosen_candidate,e)
-                    e.vacancy_wage_list.remove(wage)
+                list.append((e,wage))
+        sortedlist = sorted(list,key=lambda x : x[1],reverse=True)
+
+        for employer, wage in sortedlist:
+            possible_candidates = []
+            for a in self.job_seeker_pool:
+                allowable_wage = (a.wage * (1 - e.wage_flexibility[0]), a.wage * (1 + e.wage_flexibility[1]))
+                if (allowable_wage[0] <= wage <= allowable_wage[1] and a.past_employer != employer):
+                    possible_candidates.append(a)
+            if (possible_candidates):
+                # print([str(x) for x in possible_candidates])
+                chosen_candidate = sorted(possible_candidates, key=lambda x: x.wage,reverse=True)[0]
+                # print(chosen_candidate)
+                chosen_candidate.wage = wage
+                self.change_employer(chosen_candidate, employer)
+                employer.vacancy_wage_list.remove(wage)
 
 
     def step(self):
-        print("start")
-        self.testing()
-        print()
-
         ##wipe inactive ppl and add in new peeps
         if(self.inactive_pool):
             for i in self.inactive_pool:
@@ -200,28 +160,15 @@ class Labor_Model(Model):
             self.create_employee(len(self.inactive_pool))
             self.inactive_pool = []
 
-        print("before age")
-        self.testing()
-        print()
-
         ##Age everyone
         self.schedule_employees.step()
         retiree = [a for a in self.schedule_employees.agents if a.age >= 60.0]
-        # print("retiree" + str(len(retiree)))
         for r in retiree:
             self.change_employer(r,employer=None,leaving_wf=True)
-        # print("inactive poool" + str(len(self.inactive_pool)))
-
-        print("before leaving WF")
-        self.testing()
-        print()
-
 
         ##Employed & Unemployed peeps leaving WF
         employed_list = [x for x in self.schedule_employees.agents if x not in self.job_seeker_pool and x not in self.inactive_pool]
         for i in range(int(self.p_3 * len(employed_list))):
-            # print("self schedule employees")
-            # print([str(a) for a in self.schedule_employees.agents])
             a = random.choice(employed_list)
             self.change_employer(a,employer=None,leaving_wf=True)
             employed_list.remove(a)
@@ -231,28 +178,17 @@ class Labor_Model(Model):
             self.change_employer(a, employer=None,leaving_wf=True)
             unemployed_list.remove(a)
 
-        print("before quitting")
-        self.testing()
-        print()
-
-
-        ##Employed peeps quitting
+        ##Employed peeps quitting (but not leaving the WF)
         employed_list = [x for x in self.schedule_employees.agents if x not in self.job_seeker_pool and x not in self.inactive_pool]
         for i in range(int(self.p_1) * len(employed_list)):
             a = random.choice(employed_list)
             self.change_employer(a,employer=None)
             employed_list.remove(a)
 
-        print("before closing down")
-        self.testing()
-        print()
-
-
         ##Employers closing down
         firm_size = 0
         for i in range(self.p_4):
             a = random.choice(self.schedule_employers.agents)
-            print(a)
             firm_size += a.firm_size
             self.schedule_employers.remove(a)
             if(a in self.employee_seeker_pool):
@@ -261,26 +197,13 @@ class Labor_Model(Model):
             for w in employee_list:
                 self.change_employer(w,employer=None,employer_closed=True)
 
-        print("before new entry")
-        self.testing()
-        print()
-
-
         ##Employers entering
         self.create_employer(self.p_4,firm_size,self.wage_flexibility,add_vacancy_wage_list=True)
-
-        print("before job matching")
-        self.testing()
-        print()
-
 
         ##Job matching occurs
         self.job_search()
 
-        print("END")
-        self.testing()
-        print()
-
+        self.datacollector.step()
 
 
 
